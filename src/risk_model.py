@@ -18,12 +18,18 @@ from sklearn.inspection import permutation_importance
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, roc_curve
 
-from features import FEATURES_CATEGORICAL, FEATURES_NUMERIC, HORIZON_DAYS, build_snapshots
+from features import FEATURES_CATEGORICAL, FEATURES_NUMERIC, HORIZON_DAYS, SNAPSHOT_DAYS, build_snapshots
 
 ROOT = Path(__file__).resolve().parent.parent
 OOT_SNAPSHOTS = [240, 270]          # held out: later in time than anything the models train on
+# Train only on snapshots whose 90-day outcome is fully observed by the first test snapshot.
+# Standing on day 240, a snapshot from day 210 still has 60 days of its outcome in the future.
+TRAIN_SNAPSHOTS = [t for t in SNAPSHOT_DAYS if t + HORIZON_DAYS <= min(OOT_SNAPSHOTS)]
 N_BINS = 8
-CHAMPION = "gradient_boosting"    # or "scorecard"; see the model comparison in the report
+# Two models, two jobs: the scorecard sets tiers (transparent, explainable to merchants and
+# auditors); gradient boosting is an early-warning overlay that flags merchants the scorecard
+# rates A-C but that look like tier E to the boosted model.
+WATCHLIST_TIERS = ["A", "B", "C"]
 LGD = 1.0                           # before reserves: nothing is recovered once the merchant is gone
 TIERS = ["A", "B", "C", "D", "E"]
 TIER_SHARES = [0.40, 0.30, 0.15, 0.10, 0.05]   # share of training population, best to worst
@@ -113,8 +119,9 @@ def main():
     chargebacks = pd.read_csv(ROOT / "data" / "chargebacks.csv")
     panel = build_snapshots(merchants, daily, chargebacks)
 
+    is_train = panel["snapshot_day"].isin(TRAIN_SNAPSHOTS)
     is_oot = panel["snapshot_day"].isin(OOT_SNAPSHOTS)
-    train, oot = panel[~is_oot], panel[is_oot]
+    train, oot = panel[is_train], panel[is_oot]
 
     specs, scorecard = fit_scorecard(train)
     gb = fit_gb(train)
@@ -132,15 +139,19 @@ def main():
 
     panel["pd_scorecard"] = predict_scorecard(panel, specs, scorecard)
     panel["pd_gb"] = gb.predict_proba(_gb_matrix(panel))[:, 1]
-    panel["pd"] = panel["pd_gb"] if CHAMPION == "gradient_boosting" else panel["pd_scorecard"]
+    panel["pd"] = panel["pd_scorecard"]
 
     # Tier cut-offs come from the training period only, then stay fixed.
-    cutoffs = np.quantile(panel.loc[~is_oot, "pd"], np.cumsum(TIER_SHARES)[:-1])
+    cutoffs = np.quantile(panel.loc[is_train, "pd"], np.cumsum(TIER_SHARES)[:-1])
     panel["tier"] = assign_tiers(panel["pd"], cutoffs)
+
+    # Early-warning overlay: gradient boosting PD above its own tier-E cut-off (fixed on training data).
+    gb_alert_cutoff = np.quantile(panel.loc[is_train, "pd_gb"], 1 - TIER_SHARES[-1])
+    panel["watchlist"] = panel["tier"].isin(WATCHLIST_TIERS) & (panel["pd_gb"] >= gb_alert_cutoff)
 
     # EAD calibration: like a credit conversion factor, scale the run-rate exposure estimate
     # so that, on training-period failures, estimated exposure matches realized loss.
-    failed_train = panel[~is_oot & (panel["target"] == 1)]
+    failed_train = panel[is_train & (panel["target"] == 1)]
     ead_factor = failed_train["realized_loss"].sum() / failed_train["ead"].sum()
     panel["ead_calibrated"] = panel["ead"] * ead_factor
     panel["expected_loss"] = panel["pd"] * panel["ead_calibrated"] * LGD
@@ -155,6 +166,16 @@ def main():
     gb_importance = pd.Series(imp.importances_mean, index=_gb_matrix(oot).columns,
                               name="auc_drop_when_shuffled").sort_values(ascending=False)
     oot_tiers = tier_table(panel[is_oot])
+    o = panel[is_oot]
+    in_scope = o[o["tier"].isin(WATCHLIST_TIERS)]
+    watch = {
+        "in_scope": len(in_scope),
+        "flagged": int(in_scope["watchlist"].sum()),
+        "flagged_failure_rate": in_scope.loc[in_scope["watchlist"], "target"].mean(),
+        "unflagged_failure_rate": in_scope.loc[~in_scope["watchlist"], "target"].mean(),
+        "failures_in_scope": int(in_scope["target"].sum()),
+        "failures_caught": int(in_scope.loc[in_scope["watchlist"], "target"].sum()),
+    }
     failed_oot = panel[is_oot & (panel["target"] == 1)]
     ead_check = {
         "failures": len(failed_oot),
@@ -165,14 +186,15 @@ def main():
         "rank_correlation": failed_oot[["ead", "realized_loss"]].corr(method="spearman").iloc[0, 1],
     }
 
-    write_report(train, oot, comparison, iv, coef, gb_importance, cutoffs, oot_tiers, ead_check)
+    write_report(train, oot, comparison, iv, coef, gb_importance, cutoffs, oot_tiers, ead_check, watch)
     print(comparison.round(3).to_string(index=False))
     print("\nOut-of-time tiers:")
     print(oot_tiers.round(4).to_string())
     print("\nEAD check:", {k: round(v, 3) for k, v in ead_check.items()})
+    print("Watchlist:", {k: round(v, 4) for k, v in watch.items()})
 
 
-def write_report(train, oot, comparison, iv, coef, gb_importance, cutoffs, oot_tiers, ead_check):
+def write_report(train, oot, comparison, iv, coef, gb_importance, cutoffs, oot_tiers, ead_check, watch):
     fmt_tiers = oot_tiers.copy()
     fmt_tiers["share"] = (fmt_tiers["share"] * 100).map("{:.1f}%".format)
     fmt_tiers["predicted_pd"] = (fmt_tiers["predicted_pd"] * 100).map("{:.2f}%".format)
@@ -188,10 +210,14 @@ def write_report(train, oot, comparison, iv, coef, gb_importance, cutoffs, oot_t
         "## Setup",
         "",
         f"- Monthly point-in-time snapshots; target = merchant fails within the next {HORIZON_DAYS} days.",
-        f"- Train: snapshots {sorted(train['snapshot_day'].unique().tolist())} "
+        f"- Train: snapshots {TRAIN_SNAPSHOTS} "
         f"({len(train):,} merchant-snapshots, {int(train['target'].sum())} failures).",
         f"- Out-of-time test: snapshots {OOT_SNAPSHOTS} "
         f"({len(oot):,} merchant-snapshots, {int(oot['target'].sum())} failures).",
+        f"- Snapshots between the two are left out: their {HORIZON_DAYS}-day outcomes would not yet be known "
+        f"on day {min(OOT_SNAPSHOTS)}, when the model would go live.",
+        "- Counts are merchant-snapshots, not unique merchants: one failure can appear in up to three "
+        "consecutive snapshots.",
         "",
         "## Model comparison",
         "",
@@ -212,7 +238,7 @@ def write_report(train, oot, comparison, iv, coef, gb_importance, cutoffs, oot_t
         "",
         "## Out-of-time tiers",
         "",
-        f"Champion model: **{CHAMPION.replace('_', ' ')}**.",
+        "Tiers are set by the **WoE scorecard** (primary model).",
         "",
         "Tier cut-offs are set on the training population "
         f"({', '.join(f'{s:.0%}' for s in TIER_SHARES)} from A to E) and applied unchanged to the test period. "
@@ -221,6 +247,16 @@ def write_report(train, oot, comparison, iv, coef, gb_importance, cutoffs, oot_t
         fmt_tiers.to_markdown(),
         "",
         "Expected loss = PD x EAD x LGD, with LGD = 100% (no reserve held yet).",
+        "",
+        "## Early-warning overlay (gradient boosting)",
+        "",
+        f"Merchants the scorecard places in tiers {', '.join(WATCHLIST_TIERS)} are flagged for review when the "
+        "gradient boosting PD is above its own tier-E cut-off. Out-of-time results:",
+        "",
+        f"- Merchant-snapshots in tiers {'-'.join([WATCHLIST_TIERS[0], WATCHLIST_TIERS[-1]])}: {watch['in_scope']:,}",
+        f"- Flagged: {watch['flagged']:,} ({watch['flagged'] / watch['in_scope']:.1%})",
+        f"- Failure rate, flagged: {watch['flagged_failure_rate']:.2%}; not flagged: {watch['unflagged_failure_rate']:.2%}",
+        f"- Failures caught: {watch['failures_caught']} of {watch['failures_in_scope']} in these tiers",
         "",
         "## Exposure (EAD) check",
         "",

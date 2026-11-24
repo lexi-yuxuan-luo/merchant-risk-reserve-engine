@@ -36,6 +36,9 @@ NEW_MERCHANT_UPLIFT = 1.5
 BUST_OUT_SHARE = 0.5          # share of failing merchants that ramp volume before failing
 BUST_OUT_DAYS = 30
 BUST_OUT_MULTIPLIER = 3.0
+DISTRESS_DAYS = 60            # failing merchants that don't bust out decline over this many days
+DISTRESS_FLOOR = 0.4          # ... down to this share of normal volume
+RISK_SIGMA = 1.0              # spread of hidden merchant quality (lognormal, mean fixed at 1)
 NON_DELIVERY_DISPUTE_RATE = 0.25
 NORMAL_DISPUTE_MEAN_DAYS = 30
 NON_DELIVERY_DISPUTE_MEAN_DAYS = 20
@@ -59,7 +62,8 @@ def make_merchants(rng: np.random.Generator) -> pd.DataFrame:
     base_hazard = m["segment"].map(lambda s: SEGMENTS[s][4])
 
     # Hidden merchant quality: the model never sees this directly.
-    risk = rng.lognormal(0.0, 0.5, N_MERCHANTS)
+    # mu = -sigma^2 / 2 keeps the mean at 1, so segment baselines are the average merchant's values.
+    risk = rng.lognormal(-RISK_SIGMA**2 / 2, RISK_SIGMA, N_MERCHANTS)
     risk = np.where(m["tenure_months"] < NEW_MERCHANT_MONTHS, risk * NEW_MERCHANT_UPLIFT, risk)
     m["hidden_risk_multiplier"] = risk
     m["hidden_cb_rate"] = np.minimum(base_cb * risk, 0.05)
@@ -84,6 +88,11 @@ def simulate_merchant(row, rng: np.random.Generator):
         days_into_ramp = days - (last_day - BUST_OUT_DAYS) + 1
         progress = np.clip(days_into_ramp / BUST_OUT_DAYS, 0, 1)
         lam *= 1 + (BUST_OUT_MULTIPLIER - 1) * progress
+    elif row.failed:
+        # Distress: the business slowly loses customers before it closes.
+        days_into_decline = days - (last_day - DISTRESS_DAYS) + 1
+        progress = np.clip(days_into_decline / DISTRESS_DAYS, 0, 1)
+        lam *= 1 - (1 - DISTRESS_FLOOR) * progress
 
     txns = rng.poisson(lam)
     volume = np.round(txns * row.avg_ticket * rng.lognormal(0, 0.2, len(days)), 2)

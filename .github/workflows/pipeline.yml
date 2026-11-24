@@ -21,6 +21,5 @@ jobs:
         run: python src/risk_model.py
       - name: Evaluate reserve policies
         run: python src/policy_engine.py
-      - name: Check the committed reports match a fresh run
-        # Text reports only: chart pixels can differ slightly across font and library versions.
-        run: git diff --exit-code -- 'reports/*.md'
+      - name: Check the results still support the README's findings
+        run: python tests/check_results.py

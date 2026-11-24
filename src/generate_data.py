@@ -80,8 +80,10 @@ def simulate_merchant(row, rng: np.random.Generator):
     expected_txns = row.monthly_volume / 30 / row.avg_ticket
     lam = np.full(len(days), expected_txns)
     if row.bust_out:
-        ramp = days >= last_day - BUST_OUT_DAYS
-        lam[ramp] *= BUST_OUT_MULTIPLIER
+        # Volume climbs linearly from 1x to BUST_OUT_MULTIPLIER over the last BUST_OUT_DAYS.
+        days_into_ramp = days - (last_day - BUST_OUT_DAYS) + 1
+        progress = np.clip(days_into_ramp / BUST_OUT_DAYS, 0, 1)
+        lam *= 1 + (BUST_OUT_MULTIPLIER - 1) * progress
 
     txns = rng.poisson(lam)
     volume = np.round(txns * row.avg_ticket * rng.lognormal(0, 0.2, len(days)), 2)

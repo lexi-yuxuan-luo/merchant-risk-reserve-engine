@@ -1,0 +1,8 @@
+# Generated data: rebuild with `python src/generate_data.py`
+data/
+
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+.DS_Store

@@ -19,5 +19,8 @@ jobs:
         run: python src/generate_data.py
       - name: Train risk models
         run: python src/risk_model.py
-      - name: Check the committed report matches a fresh run
-        run: git diff --exit-code reports/
+      - name: Evaluate reserve policies
+        run: python src/policy_engine.py
+      - name: Check the committed reports match a fresh run
+        # Text reports only: chart pixels can differ slightly across font and library versions.
+        run: git diff --exit-code -- 'reports/*.md'

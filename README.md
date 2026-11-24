@@ -66,7 +66,7 @@ python src/risk_model.py      # data/scored_snapshots.csv, reports/risk_tiering.
 python src/policy_engine.py   # reports/policy_engine.md, reports/frontier.png
 ```
 
-The pipeline takes under a minute and is fully reproducible from a fixed seed; no data is stored in the repo. CI reruns it on every change and checks the reports match.
+The pipeline takes under a minute and is fully reproducible from a fixed seed; no data is stored in the repo. CI reruns it on every change and checks the results still support the findings above (`tests/check_results.py`).
 
 ## Notes
 

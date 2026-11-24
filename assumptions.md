@@ -50,7 +50,7 @@ After the risk multiplier, a minority of high-risk merchants exceed 1%, which is
 |---|---|---|---|
 | Tenure (months) | Lognormal, median ≈ 18, clipped to 1–120 | Illustrative | Most merchants are young; a long tail are established |
 | Monthly volume (USD) | Lognormal, median ≈ 20,000 | Illustrative | SMB-sized merchants with a heavy tail |
-| Risk multiplier | Lognormal(0, 0.5) | Illustrative | Unobserved merchant quality; scales both chargeback rate and failure hazard |
+| Risk multiplier | Lognormal with σ = 1.0 and mean fixed at 1 | Illustrative | Unobserved merchant quality; scales both chargeback rate and failure hazard. Mean of 1 means segment baselines describe the average merchant. A wide spread reflects that merchant risk is concentrated: most merchants are low-risk and a few are very risky. An earlier version used σ = 0.5, which made failures close to random: even a model that knew each merchant's true hazard only reached an out-of-time AUC of about 0.63 |
 | New-merchant uplift | ×1.5 risk if tenure < 6 months | Illustrative | Young merchants have less track record and fail more often |
 | Daily volume noise | Lognormal(0, 0.2) on average ticket | Illustrative | Day-to-day variation |
 
@@ -60,6 +60,7 @@ After the risk multiplier, a minority of high-risk merchants exceed 1%, which is
 |---|---|---|---|
 | Failure timing | Constant daily hazard = annual hazard × risk multiplier ÷ 365 | Illustrative | Simplest model that ties failure to observable risk |
 | Pre-failure volume ramp | 50% of failing merchants ramp volume linearly from 1x to 3x over the 30 days before failure | Illustrative | Represents "bust-out" behaviour: taking as much money as possible before disappearing. A gradual ramp is more realistic than a sudden jump and makes early detection harder. Gives the model a learnable warning signal |
+| Pre-failure distress | The other 50% of failing merchants see volume decline linearly to 40% of normal over the 60 days before failure | Illustrative | Represents a business slowly losing customers before it closes. Distressed merchants tend to cause smaller losses than bust-outs, because they have fewer undelivered sales when they fail |
 | Activity after failure | No new transactions | Illustrative | |
 
 ## 5. Chargebacks
@@ -71,7 +72,20 @@ After the risk multiplier, a minority of high-risk merchants exceed 1%, which is
 | Normal dispute arrival | Delivery date + Gamma(mean ≈ 30 days), capped at 120 days | Illustrative; cap informed by public card network dispute timeframes | Disputes arrive weeks after purchase. Card networks generally allow cardholders a limited window to dispute, often cited as up to 120 days; verify against current network rules before quoting |
 | Non-delivery dispute arrival | Failure date + Gamma(mean ≈ 20 days) | Illustrative | Customers notice soon after the merchant stops operating |
 
-## 6. Not modelled (yet)
+## 6. Risk tiering
+
+| Parameter | Value | Type | Rationale |
+|---|---|---|---|
+| Snapshots | Every 30 days, from day 60 to day 270 | Design choice | Each snapshot uses only transactions before that day and chargebacks that have already arrived, so no future information leaks into features |
+| Prediction horizon | 90 days | Design choice | Long enough to act on (raise a reserve, delay settlement), short enough to capture the pre-failure warning signals |
+| Train / test split | Train on snapshots 60–150; test out-of-time on 240 and 270; 180 and 210 are left out | Design choice | Standing on day 240, when the model would go live, only snapshots up to day 150 have a fully observed 90-day outcome. Using 180 or 210 would train on outcomes not yet known, the same mistake as modelling on immature vintages |
+| Primary model | WoE scorecard (logistic regression) sets tiers | Design choice | Transparent and widely used; easy to explain to merchants and auditors |
+| Early-warning overlay | Gradient boosting flags tier A–C merchants whose boosted PD is above its own tier-E cut-off | Design choice | Uses the more accurate but less transparent model to catch risk the scorecard misses, by sending cases to review rather than changing tiers directly |
+| Tier shares | A–E = 40%, 30%, 15%, 10%, 5% of the training population | Illustrative | Cut-offs are fixed on training data and applied unchanged to the test period |
+| LGD | 100% | Illustrative | Before any reserve is held, nothing is recovered once a merchant has gone. Reserves are introduced in the policy engine |
+| Exposure (EAD) | 30-day sales run-rate × (delivery lag × 25% + (delivery lag + 30 days) × observed chargeback ratio), scaled by a factor fitted on training-period failures | Illustrative | Undelivered sales that would be disputed, plus sales still inside the normal dispute window. The scaling factor plays the role of a credit conversion factor. In practice the 25% would be estimated from past merchant failures |
+
+## 7. Not modelled (yet)
 
 - Refunds (separate from chargebacks)
 - Chargeback representment (merchant winning a dispute back)

@@ -85,7 +85,22 @@ After the risk multiplier, a minority of high-risk merchants exceed 1%, which is
 | LGD | 100% | Illustrative | Before any reserve is held, nothing is recovered once a merchant has gone. Reserves are introduced in the policy engine |
 | Exposure (EAD) | 30-day sales run-rate × (delivery lag × 25% + (delivery lag + 30 days) × observed chargeback ratio), scaled by a factor fitted on training-period failures | Illustrative | Undelivered sales that would be disputed, plus sales still inside the normal dispute window. The scaling factor plays the role of a credit conversion factor. In practice the 25% would be estimated from past merchant failures |
 
-## 7. Not modelled (yet)
+## 7. Reserve policy engine
+
+| Parameter | Value | Type | Rationale |
+|---|---|---|---|
+| Evaluation window | Days 240–364, merchants alive on day 240 | Design choice | The out-of-time period: neither risk model trained on it |
+| Tier refresh | Tiers read at day 240, refreshed at day 270 | Design choice | Mirrors a monthly re-tiering cycle |
+| Control levels | None / Light / Medium / Heavy / Very heavy = reserve 0/5/10/15/25%, held 0/90/90/120/180 days, extra settlement delay 0/0/2/5/7 days | Illustrative | A ladder from no controls to very restrictive. Real terms are set per merchant contract |
+| Loss recovery | On the failure day, the platform uses all merchant funds it still holds (unsettled sales + reserve balance) to cover chargebacks | Simplification | Ignores legal and operational friction in applying held funds |
+| Steady state | Each merchant has been under its tier's controls long enough for the reserve to be full | Simplification | Avoids modelling the reserve build-up period |
+| Net take rate | 0.5% of volume | Illustrative | Platform revenue after interchange and network fees. No public benchmark used |
+| Churn | Probability = 1 − exp(−0.4 × funds locked ÷ monthly volume); e.g. 5.8% at Light, 50% at Very heavy | Illustrative; no public benchmark found | Merchants with more cash tied up are more likely to move to another provider. Tested at 0.2 and 0.8 in the report |
+| Churn and losses | Churn reduces revenue only; merchants are assumed to stay long enough to fail | Conservative simplification | In practice some risky merchants would leave first, lowering losses |
+| Revenue at stake | Merchant's 30-day run-rate at day 240 × window length × take rate | Design choice | Uses only information available on day 240 |
+| Expected-loss tiers | Ranked by expected loss ÷ daily volume, cut at 40/30/15/10/5% on training snapshots | Design choice | Reserves are a share of volume, so expected loss per $ of volume is the relevant risk. It combines PD with exposure, which depends heavily on delivery lag |
+
+## 8. Not modelled (yet)
 
 - Refunds (separate from chargebacks)
 - Chargeback representment (merchant winning a dispute back)

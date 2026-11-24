@@ -16,6 +16,7 @@ All data is synthetic; every assumption is documented in [`assumptions.md`](assu
 pip install -r requirements.txt
 python src/generate_data.py   # writes data/merchants.csv, data/daily.csv, data/chargebacks.csv
 python src/risk_model.py      # trains the models, writes data/scored_snapshots.csv and reports/risk_tiering.md
+python src/policy_engine.py   # evaluates reserve policies, writes reports/policy_engine.md and reports/frontier.png
 ```
 
 ## Risk tiering
@@ -29,10 +30,22 @@ Merchants are scored at monthly point-in-time snapshots on their probability of 
 
 Full results: [`reports/risk_tiering.md`](reports/risk_tiering.md).
 
+## Reserve policy engine
+
+Each tier gets a control level: a rolling reserve, an extra settlement delay, or both. Controls cut losses, because the platform can use the merchant funds it still holds when a merchant fails. They also cost revenue, because merchants with cash tied up are more likely to leave. Every policy is evaluated on the out-of-time period and plotted as residual loss against revenue lost.
+
+![Loss vs attrition frontier](reports/frontier.png)
+
+- **Tiering on expected loss beats tiering on PD.** Reserves are a share of volume, so the risk that matters is expected loss per $ of volume. It combines how likely a merchant is to fail with how much exposure its sales create, which depends heavily on delivery lag. A merchant with a moderate PD but a 60-day delivery lag can be riskier than one with a higher PD and instant delivery.
+- **Any risk-based tiering beats one-size-fits-all.** The best uniform policy costs more than twice as much as the best expected-loss tiering.
+- **The recommendation is robust.** Across churn assumptions, tiers A and B get no controls and tier C a light reserve; only the strength of controls on D and E changes.
+
+Full results: [`reports/policy_engine.md`](reports/policy_engine.md).
+
 ## Roadmap
 
 - [x] Synthetic data generator
 - [x] Merchant risk tiering (scorecard + gradient boosting) and expected loss
-- [ ] Reserve / settlement-delay policy engine and loss–attrition frontier
+- [x] Reserve / settlement-delay policy engine and loss–attrition frontier
 - [ ] Stress testing
 - [ ] Streamlit demo

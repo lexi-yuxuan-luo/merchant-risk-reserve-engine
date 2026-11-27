@@ -60,7 +60,7 @@ Details: [`reports/policy_engine.md`](reports/policy_engine.md)
 ## Next steps
 
 - **Separate distress from bust-out.** The model predicts whether a merchant stops operating, not how. Gradual distress is credit risk; bust-out is closer to fraud and costs about 3× as much per failure. Next: estimate exposure separately for each, and add a daily volume-velocity rule that delays settlement as soon as volume spikes, instead of waiting for the monthly snapshot.
-- **Link churn to the cash held.** Churn probability is a fixed number per control level today. It should rise with held funds as a share of the merchant's revenue, so reserve size and holding period affect both sides of the trade-off.
+- **Let churn vary by merchant.** Churn already rises with the share of monthly sales held, but every merchant follows the same curve, and the sensitivity is assumed. Real churn would depend on margins and switching options, and should be estimated from merchants who actually left after controls were applied.
 - **Model the reserve build-up period.** A new rolling reserve takes the full holding period to fill, so merchants who have just been placed under controls are under-protected.
 - **Smaller fixes.** Remove the small overlap in the exposure formula, where undelivered sales are counted in both the non-delivery and normal-dispute terms; calibrate exposure by segment rather than with a single factor; recalibrate PD on recent data and track actual-to-expected by tier.
 
